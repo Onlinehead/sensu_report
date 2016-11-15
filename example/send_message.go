@@ -1,31 +1,31 @@
 package main
 
 import (
-	"time"
-	"log"
 	"github.com/onlinehead/sensu_report"
+	"log"
+	"time"
 )
 
 func main() {
 	/*
-	Send a single message to sensu
+		Send a single message to sensu
 	*/
 	// Sensu param
 	sensu_settings := SensuReport.SensuSettings{
-		URI: "127.0.0.1:3000",
+		URI:  "127.0.0.1:3000",
 		Noop: false,
 	}
 	// Prepare message for send
 	sensu_message := SensuReport.SensuMessage{
 		Status: 0,
-		Text: "test",
-		Name: "test_alert",
+		Text:   "test",
+		Name:   "test_alert",
 	}
 	// Send single message
 	sensu_settings.SensuSendMessage(sensu_message)
 
 	/*
-	Run SensuReporter in goroutine and send cumulative message every 10 seconds
+		Run SensuReporter in goroutine and send cumulative message every 10 seconds
 	*/
 
 	// Reporter settings
@@ -44,10 +44,10 @@ func main() {
 	for i := 0; i < 20; i++ {
 		message := SensuReport.SensuMessage{
 			Status: 0,
-			Name: "test_alert_cumulative",
+			Name:   "test_alert_cumulative",
 		}
 		testchan <- message
 	}
 	// Just wait
-	time.Sleep(30*time.Minute)
+	time.Sleep(30 * time.Minute)
 }
