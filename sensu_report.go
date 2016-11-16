@@ -10,32 +10,32 @@ import (
 	"time"
 )
 
-type SensuMessage struct {
+type Message struct {
 	Text   string `json:"output" binding:"required"`
 	Name   string `json:"name" binding:"required"`
 	Status int    `json:"status" binding:"required"`
 }
 
-type SensuReportSettings struct {
-	SensuSettings
+type Reporter struct {
+	ClientSettings
 	CumulativeTime int
 	MaxStatus      int
 }
 
-type SensuSettings struct {
+type ClientSettings struct {
 	URI  string // As example, default "127.0.0.1:3000"
 	Noop bool   // Test run, not really send messages
 }
 
 //Get channel with sensu messages and wait time cumulative messages
-func (sensu SensuReportSettings) SensuReporter(reports <-chan SensuMessage) chan int {
+func (sensu Reporter) Start(reports <-chan Message) chan int {
 	if sensu.CumulativeTime < 10 {
 		log.Println("CummulativeTime must be >= 10, set default 10")
 		sensu.CumulativeTime = 10
 	}
 	var mu sync.Mutex
 	// Create map with messages
-	var reports_cache []SensuMessage
+	var reports_cache []Message
 	// Collect messages to cache
 	go func() {
 		for report := range reports {
@@ -49,13 +49,8 @@ func (sensu SensuReportSettings) SensuReporter(reports <-chan SensuMessage) chan
 	}()
 	// Process messages cache each 30 seconds
 	for {
-		type MessageGroup struct {
-			MaxStatus int
-			// Numbers of messages with each code in format [code]number_of_messages
-			Results map[int]int
-		}
 		// Group messages by name
-		rep := make(map[string]MessageGroup)
+		rep := make(map[string]map[int]int)
 		// Create working copy and clear cache with locking
 		mu.Lock()
 		reserved_messages := reports_cache
@@ -63,46 +58,42 @@ func (sensu SensuReportSettings) SensuReporter(reports <-chan SensuMessage) chan
 		mu.Unlock()
 		for s := range reserved_messages {
 			if val, ok := rep[reserved_messages[s].Name]; ok {
-				// Update MaxStatus if needed
-				if val.MaxStatus < reserved_messages[s].Status {
-					val.MaxStatus = reserved_messages[s].Status
-				}
 				// Update number of reports with that code
-				if _, code_ok := val.Results[reserved_messages[s].Status]; code_ok {
-					val.Results[reserved_messages[s].Status] += 1
+				if _, code_ok := val[reserved_messages[s].Status]; code_ok {
+					val[reserved_messages[s].Status] += 1
 				} else {
-					val.Results[reserved_messages[s].Status] = 1
+					val[reserved_messages[s].Status] = 1
 				}
 			} else {
 				res := make(map[int]int)
 				res[reserved_messages[s].Status] = 1
-				m := MessageGroup{
-					MaxStatus: reserved_messages[s].Status,
-					Results:   res,
-				}
-				rep[reserved_messages[s].Name] = m
+				rep[reserved_messages[s].Name] = res
 			}
 		}
 		// Send report to Sensu, one per name
 		for i := range rep {
-			var text string
-			for c := range rep[i].Results {
-				text += fmt.Sprintf("We have %s results with status %s", strconv.Itoa(rep[i].Results[c]), strconv.Itoa(c))
+			text := "We have:\n"
+			var max_status int
+			for c := range rep[i] {
+				text += fmt.Sprintf("%s results with status %s;\n", strconv.Itoa(rep[i][c]), strconv.Itoa(c))
+				if c > max_status {
+					max_status = c
+				}
 			}
-			smess := SensuMessage{
-				Status: rep[i].MaxStatus,
+			smess := Message{
+				Status: max_status,
 				Name:   i,
 				Text:   text,
 			}
 			log.Printf("Message to Sensu with name '%s' sent", i)
-			sensu.SensuSendMessage(smess)
+			sensu.SendMessage(smess)
 		}
 		time.Sleep(time.Duration(sensu.CumulativeTime) * time.Second)
 	}
 }
 
 // Standalone sender
-func (sensu SensuSettings) SensuSendMessage(message SensuMessage) {
+func (sensu ClientSettings) SendMessage(message Message) {
 	if sensu.Noop == false {
 		conn, err := net.Dial("udp", sensu.URI)
 		if err != nil {
